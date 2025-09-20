@@ -1,0 +1,4 @@
+npm --version
+10.8.2
+node --version
+v20.19.4
