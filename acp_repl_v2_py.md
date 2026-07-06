@@ -1,3 +1,8 @@
+# Title ...
+
+This is the entire document
+
+```
 #!/usr/bin/env python3
 """
 ACP REPL v2 — Enhanced Python REPL for opencode via Agent Client Protocol.
@@ -1386,3 +1391,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
