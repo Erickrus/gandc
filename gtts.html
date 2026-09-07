@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TTS 语音朗读器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .panel { background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); padding: 1.5rem; }
+        .btn { padding: 0.75rem 1.5rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background-color 0.2s; display: inline-block; text-align: center; -webkit-tap-highlight-color: transparent; }
+        .btn-primary { background-color: #1877f2; color: white; }
+        .btn-primary:hover { background-color: #166fe5; }
+        .btn-danger { background-color: #e41e3f; color: white; }
+        .btn-danger:hover { background-color: #c91733; }
+        .input-field, .select-field { border: 1px solid #ccd0d5; border-radius: 6px; padding: 0.75rem; width: 100%; background-color: white; }
+    </style>
+</head>
+<body class="p-4 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-xl">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">TTS 语音朗读器</h1>
+            <p class="text-sm text-gray-500 mt-1">支持本地运行，无跨域限制</p>
+        </header>
+
+        <main class="panel space-y-4">
+            <!-- Engine & Language selectors -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="engine-select" class="block text-gray-700 font-semibold mb-2">朗读引擎</label>
+                    <select id="engine-select" class="select-field">
+                        <option value="google">Google 在线引擎 (首选)</option>
+                        <option value="native">浏览器原生引擎 (完全离线)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="lang-select" class="block text-gray-700 font-semibold mb-2">选择语言</label>
+                    <select id="lang-select" class="select-field">
+                        <option value="zh-CN">中文 (普通话)</option>
+                        <option value="yue">粤语 (广东话)</option>
+                        <option value="en">英语 (美国)</option>
+                        <option value="ja">日语 (日本)</option>
+                        <option value="ko">韩语 (韩国)</option>
+                        <option value="fr">法语 (法国)</option>
+                        <option value="es">西班牙语 (西班牙)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Text Input Area -->
+            <div>
+                <label for="text-input" class="block text-gray-700 font-semibold mb-2">输入文本</label>
+                <textarea id="text-input" class="input-field h-48 resize-none" placeholder="在此输入或粘贴想要朗读的文本... 长文本将自动分段，实现流畅不卡顿的连续播放。"></textarea>
+            </div>
+
+            <!-- Progress Indicator -->
+            <div id="status-container" class="hidden text-sm text-gray-600 bg-gray-100 p-3 rounded border border-gray-200">
+                <div class="flex items-center gap-2">
+                    <span id="status-text" class="font-medium text-gray-700">准备就绪</span>
+                </div>
+                <div id="progress-bar-container" class="hidden mt-2 w-full bg-gray-200 rounded-full h-2">
+                    <div id="progress-bar" class="bg-blue-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="grid grid-cols-2 gap-3">
+                <button id="toggle-btn" class="btn btn-primary w-full">开始朗读</button>
+                <button id="download-btn" class="btn btn-primary w-full">下载 MP3</button>
+            </div>
+        </main>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const engineSelect = document.getElementById('engine-select');
+    const langSelect = document.getElementById('lang-select');
+    const textInput = document.getElementById('text-input');
+    const toggleBtn = document.getElementById('toggle-btn');
+    const downloadBtn = document.getElementById('download-btn');
+    const statusContainer = document.getElementById('status-container');
+    const statusText = document.getElementById('status-text');
+    const progressBarContainer = document.getElementById('progress-bar-container');
+    const progressBar = document.getElementById('progress-bar');
+
+    let isPlaying = false;
+    let isDownloading = false;
+    let textChunks = [];
+    let currentChunkIndex = 0;
+    let currentAudio = null;
+
+    const langMap = {
+        'zh-CN': { google: 'zh-CN', native: 'zh-CN' },
+        'yue': { google: 'yue', native: 'zh-HK' },
+        'en': { google: 'en', native: 'en-US' },
+        'ja': { google: 'ja', native: 'ja-JP' },
+        'ko': { google: 'ko', native: 'ko-KR' },
+        'fr': { google: 'fr', native: 'fr-FR' },
+        'es': { google: 'es', native: 'es-ES' }
+    };
+
+    if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+
+    function splitText(text, maxLength = 150) {
+        const chunks = [];
+        let currentChunk = "";
+        const sentences = text.match(/[^,.;!?，。；！？\r\n]+[,.;!?，。；！？\r\n]*/g) || [text];
+        for (let sentence of sentences) {
+            if ((currentChunk + sentence).length > maxLength) {
+                if (currentChunk.trim()) { chunks.push(currentChunk.trim()); currentChunk = ""; }
+                while (sentence.length > maxLength) {
+                    chunks.push(sentence.substring(0, maxLength).trim());
+                    sentence = sentence.substring(maxLength);
+                }
+                currentChunk = sentence;
+            } else {
+                currentChunk += sentence;
+            }
+        }
+        if (currentChunk.trim()) chunks.push(currentChunk.trim());
+        return chunks;
+    }
+
+    // --- PLAYBACK ---
+    function playNextChunk() {
+        if (!isPlaying) return;
+        if (currentChunkIndex >= textChunks.length) { stopPlayback(); return; }
+        const chunk = textChunks[currentChunkIndex];
+        const langInfo = langMap[langSelect.value] || langMap['zh-CN'];
+        statusText.textContent = `正在播放第 ${currentChunkIndex + 1} / ${textChunks.length} 段...`;
+        if (engineSelect.value === 'google') {
+            playGoogleTTS(chunk, langInfo.google, langInfo.native);
+        } else {
+            playNativeTTS(chunk, langInfo.native);
+        }
+    }
+
+    function playGoogleTTS(chunk, googleLang, nativeFallback) {
+        const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${googleLang}&client=tw-ob&q=${encodeURIComponent(chunk)}`;
+        if (currentAudio) currentAudio.pause();
+        currentAudio = new Audio(url);
+        currentAudio.onended = () => { currentChunkIndex++; playNextChunk(); };
+        currentAudio.onerror = () => { playNativeTTS(chunk, nativeFallback); };
+        currentAudio.play().catch(() => { playNativeTTS(chunk, nativeFallback); });
+    }
+
+    function playNativeTTS(chunk, nativeLang) {
+        if (!('speechSynthesis' in window)) { currentChunkIndex++; playNextChunk(); return; }
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(chunk);
+        utterance.lang = nativeLang;
+        const voices = window.speechSynthesis.getVoices();
+        const matched = voices.find(v => v.lang.replace('_','-').toLowerCase() === nativeLang.toLowerCase())
+                     || voices.find(v => v.lang.startsWith(nativeLang.split('-')[0]));
+        if (matched) utterance.voice = matched;
+        utterance.onend = () => { currentChunkIndex++; playNextChunk(); };
+        utterance.onerror = (e) => { if (e.error !== 'interrupted' && isPlaying) { currentChunkIndex++; playNextChunk(); } };
+        window.speechSynthesis.speak(utterance);
+    }
+
+    function startPlayback() {
+        const text = textInput.value.trim();
+        if (!text) { alert("请输入要朗读的文本。"); return; }
+        textChunks = splitText(text);
+        if (textChunks.length === 0) return;
+        isPlaying = true;
+        currentChunkIndex = 0;
+        toggleBtn.textContent = "停止播放";
+        toggleBtn.className = "btn btn-danger w-full";
+        statusContainer.classList.remove('hidden');
+        progressBarContainer.classList.add('hidden');
+        playNextChunk();
+    }
+
+    function stopPlayback() {
+        isPlaying = false;
+        if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+        toggleBtn.textContent = "开始朗读";
+        toggleBtn.className = "btn btn-primary w-full";
+        statusContainer.classList.add('hidden');
+        statusText.textContent = "准备就绪";
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        if (isPlaying) stopPlayback(); else startPlayback();
+    });
+
+    // --- DOWNLOAD (Google engine only, merges chunks into single MP3) ---
+    const CORS_PROXIES = [
+        url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+        url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+        url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+    ];
+
+    async function fetchWithProxy(ttsUrl) {
+        for (const makeProxy of CORS_PROXIES) {
+            try {
+                const resp = await fetch(makeProxy(ttsUrl));
+                if (!resp.ok) continue;
+                const buf = await resp.arrayBuffer();
+                if (buf.byteLength > 0) return buf;
+            } catch (e) { continue; }
+        }
+        throw new Error('All proxies failed');
+    }
+
+    function updateProgress(current, total) {
+        progressBar.style.width = Math.round((current / total) * 100) + '%';
+        statusText.textContent = `正在下载第 ${current} / ${total} 段...`;
+    }
+
+    async function startDownload() {
+        const text = textInput.value.trim();
+        if (!text) { alert("请输入要下载的文本。"); return; }
+        if (engineSelect.value === 'native') {
+            alert("浏览器原生引擎不支持下载音频，请切换到 Google 在线引擎。");
+            return;
+        }
+        const chunks = splitText(text);
+        if (chunks.length === 0) return;
+        const lang = (langMap[langSelect.value] || langMap['zh-CN']).google;
+
+        isDownloading = true;
+        downloadBtn.textContent = "下载中...";
+        downloadBtn.disabled = true;
+        downloadBtn.className = "btn btn-primary w-full opacity-60 cursor-not-allowed";
+        statusContainer.classList.remove('hidden');
+        progressBarContainer.classList.remove('hidden');
+        progressBar.style.width = '0%';
+
+        const audioBuffers = [];
+        let failed = 0;
+        for (let i = 0; i < chunks.length; i++) {
+            if (!isDownloading) break;
+            updateProgress(i + 1, chunks.length);
+            try {
+                const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(chunks[i])}`;
+                const buf = await fetchWithProxy(ttsUrl);
+                audioBuffers.push(buf);
+            } catch (err) {
+                console.warn(`Chunk ${i + 1} failed:`, err);
+                failed++;
+            }
+            if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 300));
+        }
+
+        if (audioBuffers.length === 0) {
+            alert("所有音频段下载失败，请检查网络连接或稍后再试。");
+            resetDownloadUI();
+            return;
+        }
+
+        statusText.textContent = "正在合并音频...";
+        progressBar.style.width = '100%';
+        const totalLen = audioBuffers.reduce((s, b) => s + b.byteLength, 0);
+        const merged = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const buf of audioBuffers) { merged.set(new Uint8Array(buf), offset); offset += buf.byteLength; }
+
+        const blob = new Blob([merged], { type: 'audio/mpeg' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'tts_audio.mp3';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+
+        statusText.textContent = failed > 0 ? `下载完成！(${failed} 段失败，已跳过)` : "下载完成！";
+        setTimeout(resetDownloadUI, 2000);
+    }
+
+    function resetDownloadUI() {
+        isDownloading = false;
+        downloadBtn.textContent = "下载 MP3";
+        downloadBtn.disabled = false;
+        downloadBtn.className = "btn btn-primary w-full";
+        progressBarContainer.classList.add('hidden');
+        statusContainer.classList.add('hidden');
+        statusText.textContent = "准备就绪";
+        progressBar.style.width = '0%';
+    }
+
+    downloadBtn.addEventListener('click', () => { if (!isDownloading) startDownload(); });
+});
+</script>
+</body>
+</html>
